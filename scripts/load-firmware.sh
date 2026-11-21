@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# load-firmware.sh — ручная загрузка прошивки в HP LaserJet 1020.
-# Нужна, если принтер уже был включён и udev по какой-то причине
-# не загрузил прошивку автоматически.
+# load-firmware.sh — manual firmware upload to HP LaserJet 1020.
+# Needed when the printer was already on and udev didn't upload
+# the firmware automatically for some reason.
 #
-# Запуск:  sudo bash load-firmware.sh
+# Usage:  sudo bash load-firmware.sh
 
 set -u
 
@@ -12,17 +12,17 @@ FW=""
 for d in /lib/firmware/hp /var/lib/foo2zjs/firmware /usr/share/foo2zjs/firmware; do
     [ -f "$d/sihp1020.dl" ] && { FW="$d/sihp1020.dl"; break; }
 done
-[ -n "$FW" ] || { echo "Прошивка sihp1020.dl не найдена. Сначала запустите setup-print-server.sh"; exit 1; }
+[ -n "$FW" ] || { echo "Firmware sihp1020.dl not found. Run setup-print-server.sh first"; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || { echo "Запустите от root: sudo bash $0"; exit 1; }
+[ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo bash $0"; exit 1; }
 
-lsusb | grep -qi '03f0:2b17' || { echo "Принтер не виден на USB — проверьте кабель и питание"; exit 1; }
+lsusb | grep -qi '03f0:2b17' || { echo "Printer not visible on USB — check cable and power"; exit 1; }
 
-echo "Загружаю $FW через штатный загрузчик hplj1020..."
+echo "Uploading $FW via the stock hplj1020 loader..."
 SUBSYSTEM=usb /lib/udev/hplj1020
 sleep 10
 
-# Проверка: FWVER в ответе usb_printerid означает, что прошивка на месте
+# Check: FWVER in usb_printerid output means firmware is in the printer
 LOADED=0
 for dev in /dev/usb/lp*; do
     [ -e "$dev" ] || continue
@@ -31,8 +31,13 @@ for dev in /dev/usb/lp*; do
     usb_printerid "$dev" 2>/dev/null | grep -q 'FWVER' && LOADED=1
 done
 
+# Fallback check via CUPS backend (works even without /dev/usb/lp*)
+if [ "$LOADED" -eq 0 ] && /usr/lib/cups/backend/usb 2>/dev/null | grep -q 'FWVER'; then
+    LOADED=1
+fi
+
 if [ "$LOADED" -eq 0 ]; then
-    echo "Через hplj1020 не получилось — пробую напрямую в /dev/usb/lp0..."
+    echo "hplj1020 didn't work — trying direct write to /dev/usb/lp*..."
     for dev in /dev/usb/lp*; do
         [ -e "$dev" ] || continue
         cat "$FW" > "$dev" && sleep 5
@@ -41,8 +46,8 @@ if [ "$LOADED" -eq 0 ]; then
 fi
 
 if [ "$LOADED" -eq 1 ]; then
-    echo "OK: прошивка загружена, принтер готов к печати."
+    echo "OK: firmware loaded, printer ready."
 else
-    echo "Прошивка НЕ загружена. См. docs/04-troubleshooting.md"
+    echo "Firmware NOT loaded. See docs/04-troubleshooting.md"
     exit 1
 fi

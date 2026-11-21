@@ -1,20 +1,21 @@
 #!/bin/bash
 #
-# setup-print-server.sh — настройка Raspberry Pi (OS Lite) как принт-сервера
-# для HP LaserJet 1020.
+# setup-print-server.sh — turn a Raspberry Pi (OS Lite) into a print
+# server for HP LaserJet 1020.
 #
-# Что делает скрипт:
-#   1. Устанавливает CUPS, драйвер foo2zjs, avahi (mDNS)
-#   2. Скачивает прошивку sihp1020.dl (обязательна: без неё 1020 не печатает,
-#      она загружается в принтер при каждом его включении через udev)
-#   3. Открывает CUPS для локальной сети (IPP на порту 631)
-#   4. Добавляет принтер в CUPS и делает его общим
-#   5. Загружает прошивку в принтер, если он уже подключен
+# What it does:
+#   1. Installs CUPS, the foo2zjs driver and avahi (mDNS)
+#   2. Downloads the printer firmware sihp1020.dl — mandatory:
+#      without it the LJ1020 prints nothing, and it must be re-uploaded
+#      on every printer power-on (handled automatically by udev)
+#   3. Opens CUPS to the local network (IPP on port 631)
+#   4. Creates the printer queue and shares it
+#   5. Uploads firmware right away if the printer is already on
 #
-# Запуск на Raspberry Pi:
+# Usage on the Pi:
 #   sudo bash setup-print-server.sh
 #
-# Скрипт идемпотентен — можно запускать повторно.
+# Idempotent — safe to re-run.
 
 set -euo pipefail
 
@@ -27,30 +28,30 @@ ok()   { printf '\033[1;32m    %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33mWARN: %s\033[0m\n' "$*" >&2; }
 die()  { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "Запустите от root: sudo bash $0"
+[ "$(id -u)" -eq 0 ] || die "Run as root: sudo bash $0"
 REAL_USER="${SUDO_USER:-}"
 
-# ─── 1. Пакеты ──────────────────────────────────────────────────────────────
-step "1/6 Установка пакетов (может занять время на Pi 1)"
+# ─── 1. Packages ────────────────────────────────────────────────────────────
+step "1/6 Installing packages (slow on Pi 1, be patient)"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     cups cups-filters ghostscript \
     printer-driver-foo2zjs printer-driver-foo2zjs-common foomatic-db-engine \
     avahi-daemon wget usbutils
 systemctl enable --now cups avahi-daemon
-ok "Пакеты установлены"
+ok "Packages installed"
 
-# ─── 2. Прошивка принтера ───────────────────────────────────────────────────
-step "2/6 Прошивка $FW_NAME"
+# ─── 2. Printer firmware ────────────────────────────────────────────────────
+step "2/6 Printer firmware $FW_NAME"
 if [ -f "/lib/firmware/hp/$FW_NAME" ]; then
-    ok "Уже есть: /lib/firmware/hp/$FW_NAME"
+    ok "Already present: /lib/firmware/hp/$FW_NAME"
 else
     TMPD="$(mktemp -d)"
     ( cd "$TMPD" && mkdir -p /lib/firmware/hp && getweb 1020 )
     rm -rf "$TMPD"
 fi
-[ -f "/lib/firmware/hp/$FW_NAME" ] || die "Не удалось получить $FW_NAME (проверьте интернет на Pi)"
-# Копии в альтернативные каталоги — на случай другой сборки загрузчика
+[ -f "/lib/firmware/hp/$FW_NAME" ] || die "Failed to get $FW_NAME (check internet on the Pi)"
+# Copy to alternative dirs — the udev loader's FWDIR varies across builds
 for d in $FW_DIRS; do
     mkdir -p "$d"
     [ -f "$d/$FW_NAME" ] || cp "/lib/firmware/hp/$FW_NAME" "$d/" 2>/dev/null || true
@@ -58,31 +59,31 @@ done
 ls -l "/lib/firmware/hp/$FW_NAME"
 udevadm control --reload-rules
 
-# ─── 3. CUPS: доступ из локальной сети ──────────────────────────────────────
-step "3/6 Настройка CUPS для LAN"
+# ─── 3. CUPS: LAN access ────────────────────────────────────────────────────
+step "3/6 Configuring CUPS for LAN"
 CUPSD=/etc/cups/cupsd.conf
 [ -f "$CUPSD.bak" ] || cp "$CUPSD" "$CUPSD.bak"
-# Слушать все интерфейсы на порту 631
+# Listen on all interfaces, port 631
 if grep -qE '^Listen[[:space:]]+localhost:631' "$CUPSD"; then
     sed -i 's/^Listen[[:space:]]\+localhost:631/Port 631/' "$CUPSD"
 elif ! grep -qE '^(Port|Listen)[[:space:]]+.*:631' "$CUPSD"; then
     echo 'Port 631' >> "$CUPSD"
 fi
-# Разрешить доступ с локальных интерфейсов во все Location-блоки
+# Allow access from the local network in every <Location> block
 grep -q 'Allow @LOCAL' "$CUPSD" || sed -i '/Order allow,deny/a\  Allow @LOCAL' "$CUPSD"
-# Публиковать принтер и разрешить удалённое администрирование
+# Share the printer and allow remote administration
 cupsctl --share-printers --remote-admin
-# Пользователь-администратор CUPS
+# CUPS admin user
 [ -n "$REAL_USER" ] && usermod -aG lpadmin "$REAL_USER" || true
 systemctl restart cups
-ok "CUPS слушает :631 и открыт для локальной сети"
+ok "CUPS listens on :631 and is open to the LAN"
 
-# ─── 4. Добавление принтера ─────────────────────────────────────────────────
-step "4/6 Поиск принтера и драйвера"
+# ─── 4. Create the printer queue ────────────────────────────────────────────
+step "4/6 Looking for printer and driver"
 if lsusb | grep -qi '03f0:2b17'; then
-    ok "HP LaserJet 1020 виден на USB"
+    ok "HP LaserJet 1020 detected on USB"
 else
-    warn "Принтер не обнаружен на USB. Проверьте кабель и питание, затем перезапустите скрипт."
+    warn "Printer not found on USB. Check the cable and power, then re-run this script."
 fi
 
 URI="$(lpinfo -v | awk 'BEGIN{IGNORECASE=1} /^direct usb.*1020/ {print $2; exit}')"
@@ -95,47 +96,51 @@ if [ -n "$URI" ] && [ -n "$MODEL" ]; then
         -L "HP LaserJet 1020 (Raspberry Pi)" \
         -o printer-is-shared=true
     lpadmin -d "$PRINTER_NAME"
-    ok "Принтер $PRINTER_NAME добавлен: $URI (драйвер: $MODEL)"
+    ok "Printer $PRINTER_NAME added: $URI (driver: $MODEL)"
 elif [ -z "$URI" ]; then
-    warn "CUPS не видит принтер по USB (lpinfo -v). Подключите принтер, включите его и запустите скрипт повторно."
+    warn "CUPS sees no USB printer (lpinfo -v). Power it on and re-run this script."
 else
-    warn "Не найден PPD для LaserJet 1020 в lpinfo -m — проверьте установку printer-driver-foo2zjs."
+    warn "No LaserJet 1020 PPD found in lpinfo -m — check printer-driver-foo2zjs install."
 fi
 
-# ─── 5. Загрузка прошивки в принтер ─────────────────────────────────────────
-step "5/6 Загрузка прошивки в принтер"
+# ─── 5. Upload firmware to the printer ──────────────────────────────────────
+step "5/6 Uploading firmware to the printer"
 if lsusb | grep -qi '03f0:2b17'; then
-    # Штатный загрузчик пакета: сам найдёт принтер через CUPS usb-backend
+    # Stock loader from the package — finds the printer via the CUPS usb backend
     SUBSYSTEM=usb /lib/udev/hplj1020 || true
-    echo "Ожидаем загрузку прошивки (индикатор на принтере мигнёт ~5 сек)..."
+    echo "Waiting for firmware upload (the printer LED blinks ~5 s)..."
     sleep 10
     for dev in /dev/usb/lp*; do
         [ -e "$dev" ] || continue
         if usb_printerid "$dev" 2>/dev/null | grep -q 'FWVER'; then
-            ok "Прошивка загружена — принтер готов ($dev, FWVER есть)"
+            ok "Firmware loaded — printer ready ($dev, FWVER present)"
         else
-            warn "FWVER не виден на $dev — прошивка могла не загрузиться"
+            warn "No FWVER on $dev — firmware may not have loaded"
         fi
     done
+    # Fallback check without usblp: FWVER in the CUPS usb backend output
+    if /usr/lib/cups/backend/usb 2>/dev/null | grep -q 'FWVER'; then
+        ok "FWVER confirmed via CUPS backend"
+    fi
 else
-    warn "Принтер не подключен — прошивка загрузится автоматически при его включении"
+    warn "Printer not connected — firmware will upload automatically when it powers on"
 fi
 
-# ─── 6. Итог ────────────────────────────────────────────────────────────────
-step "6/6 Статус"
+# ─── 6. Summary ─────────────────────────────────────────────────────────────
+step "6/6 Status"
 lpstat -t || true
 IP="$(hostname -I | awk '{print $1}')"
 HOST="$(hostname)"
 cat <<EOF
 
-Готово. Дальше:
+Done. Next steps:
 
-  * Если принтер был выключен — включите его: udev сам загрузит прошивку
-    (индикатор мигнёт оранжевым ~5 сек).
-  * Тестовая страница:      lp -d $PRINTER_NAME /usr/share/cups/data/testprint
-  * Веб-интерфейс CUPS:     http://$IP:631  (или http://$HOST.local:631)
-  * Подключение клиентов:   http://$HOST.local:631/printers/$PRINTER_NAME
-    (инструкции — docs/03-clients.md)
-  * Диагностика проблем:    sudo bash diagnostics.sh
+  * If the printer was off — power it on: udev uploads the firmware
+    automatically (orange LED blinks ~5 s).
+  * Test page:              lp -d $PRINTER_NAME /usr/share/cups/data/testprint
+  * CUPS web interface:     http://$IP:631  (or http://$HOST.local:631)
+  * Client printer URL:     http://$HOST.local:631/printers/$PRINTER_NAME
+    (per-OS instructions — docs/03-clients.md)
+  * Troubleshooting:        sudo bash diagnostics.sh
 
 EOF

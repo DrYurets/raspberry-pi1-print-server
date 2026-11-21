@@ -1,4 +1,12 @@
-# Образы ОС (большие бинарники, скачиваются заново)
+# OS images (large binaries, re-downloadable)
 images/
 *.img
 *.img.xz
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor/backup files
+*~
+*.swp

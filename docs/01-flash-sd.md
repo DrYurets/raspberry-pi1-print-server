@@ -1,12 +1,5 @@
 # Шаг 1. Запись Raspberry Pi OS на microSD-карту
 
-> **Статус: ВЫПОЛНЕНО вручную.** Карта уже записана через `dd` —
-> образ `2026-10-06-raspios-trixie-armhf-lite` и сконфигурирована:
-> hostname `printserver`, пользователь `pi` (пароль сгенерирован),
-> SSH по ключу, timezone Europe/Minsk, `gpu_mem=16`, файлы проекта
-> в `/home/pi/printserver`. Этот файл оставлен как справка —
-> переходите к [02-setup-print-server.md](02-setup-print-server.md).
-
 Raspberry Pi 1 Model B Rev 2 поддерживается официальной 32-битной
 Raspberry Pi OS. Ставим вариант **Lite** — без графического интерфейса,
 экономим все 512 МБ ОЗУ под печать.

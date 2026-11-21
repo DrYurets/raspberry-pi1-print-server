@@ -1,78 +1,65 @@
-# AGENTS.md — Raspberry Pi 1 принт-сервер для HP LaserJet 1020
+# AGENTS.md — context for maintainers & AI agents
 
-Состояние проекта: **работает**. Тестовые страницы печатаются и с сервера,
-и с клиентского ноутбука по сети.
+## What this is
 
-## Железо и топология
+Scripts + docs that turn a Raspberry Pi (verified: Pi 1 Model B Rev 2,
+512 MB, Raspberry Pi OS Lite 32-bit Trixie) into a LAN print server for
+**HP LaserJet 1020**.
 
-- **Сервер:** Raspberry Pi 1 Model B Rev 2, 512 МБ, Ethernet к роутеру.
-- **Принтер:** HP LaserJet 1020, USB `03f0:2b17`, serial `FN14TA7` — подключён к Pi.
-- **Питание:** 3А micro-USB БП. ВАЖНО: комплектный слабый БП вызывал
-  просадки → I/O error → rootfs уходила в read-only во время `apt`.
-  Если снова словите I/O errors — подозревать питание И карту
-  (карта дешёвая noname 16 ГБ; read-тест прошла, но запасная карта не помешает).
-- **SD:** 16 ГБ, образ `2026-10-06-raspios-trixie-armhf-lite` (Raspberry Pi OS Lite 32-bit, Trixie).
+## Key technical facts (don't relearn the hard way)
 
-## Сеть
+- LJ1020 is host-based: firmware `sihp1020.dl` must be pushed into the
+  printer **on every power-on**. Driver = **foo2zjs** (`printer-driver-foo2zjs`
+  + `-common`). **hplip does NOT support LJ1020.**
+- `getweb 1020` (from `-common`, root-only, in `/usr/sbin`) downloads
+  `sihp1020.img`, converts via `arm2hpdl` → `/lib/firmware/hp/sihp1020.dl`.
+  The packaged udev hook `/lib/udev/hplj1020` (triggered by
+  `85-hplj10xx.rules`, RUN+="hplj1020") reads it from `/lib/firmware/hp`
+  and uploads via the CUPS usb backend. We also copy the .dl to
+  `/var/lib/foo2zjs/firmware` and `/usr/share/foo2zjs/firmware` —
+  the loader's FWDIR differs across distro builds; cheap insurance.
+- PPD comes from the dynamic generator `/usr/lib/cups/driver/foo2zjs` —
+  pick it via `lpinfo -m | grep -i 1020` (string like
+  `foo2zjs:0/ppd/foo2zjs/HP-LaserJet_1020.ppd`).
+- USB id of LJ1020: `03f0:2b17`. Firmware-loaded check: `FWVER` in
+  `sudo /usr/lib/cups/backend/usb` output (no `usblp`/`/dev/usb/lp*` needed).
+- CUPS LAN access: `Port 631` (not `Listen localhost:631`) + `Allow @LOCAL`
+  inside `<Location>` blocks + `lpadmin -o printer-is-shared=true` +
+  `cupsctl --share-printers --remote-admin`. Web UI needs
+  `cupsctl WebInterface=yes` (off by default).
+- Clients should send formats the server can rasterize. Windows: add by
+  `http://HOST:631/printers/HP1020` URL with a **PostScript** driver
+  (Microsoft PS Class Driver). Linux: `-m everywhere` IPP queue.
+  The native HP 1020 driver does not work over IPP.
 
-- hostname: `printserver` (mDNS: `printserver.local`)
-- IP: `192.168.1.20` (DHCP). MAC: `b8:27:eb:c7:b2:79` — рекомендуется
-  резервирование в роутере.
-- Доступ: `ssh pi@printserver.local` (ключ `~/.ssh/id_ed25519` с ноутбука;
-  пароль есть на случай проблем, sudo — NOPASSWD).
-- timezone: Europe/Minsk.
+## First-boot provisioning (Trixie specifics)
 
-## Ключевая архитектура
+- `userconf`/`userconf.txt` in bootfs (line `user:sha512crypt`) is
+  **required headless** — without it `userconfig.service` hangs boot in an
+  interactive wizard on tty8.
+- Empty `ssh` file in bootfs → `sshswitch.service` enables sshd.
+- The stock image already contains user `pi` (uid 1000, nologin);
+  userconf-service renames/re-enables it, `usermod -s /bin/bash` needed
+  if provisioning manually.
 
-HP 1020 — host-based принтер: прошивку нужно заливать при **каждом**
-включении. Поэтому:
+## Hardware lessons (verified by failure)
 
-- **Драйвер `foo2zjs`** (`printer-driver-foo2zjs` + `-common`). hplip НЕ подходит.
-- Прошивка: `getweb 1020` → `/lib/firmware/hp/sihp1020.dl` (+ копии в
-  `/var/lib/foo2zjs/firmware/`, `/usr/share/foo2zjs/firmware/`).
-- Автозагрузка: udev-правило `85-hplj10xx.rules` → `/lib/udev/hplj1020`
-  (грузит через CUPS usb-backend). Проверка: `FWVER` в выводе
-  `sudo /usr/lib/cups/backend/usb` — есть → прошивка в принтере.
-  (`/dev/usb/lp*` может не существовать — usblp не всегда поднят.)
-- **CUPS 2.4.10**, очередь `HP1020` → `usb://HP/LaserJet%201020?serial=FN14TA7`,
-  PPD `foo2zjs:0/ppd/foo2zjs/HP-LaserJet_1020.ppd`. Шаринг: `Port 631` +
-  `Allow @LOCAL` во всех Location + `printer-is-shared`. WebInterface=yes,
-  remote-admin включён. Web UI: `http://printserver.local:631`.
-- **avahi-daemon** — mDNS-анонс (клиенты находят принтер сами).
+- **Weak PSU kills SD cards**: undervoltage during heavy `apt` write load
+  → I/O errors → rootfs remounts read-only → broken system. Use ≥2 A.
+- The printer must be **powered on** when the queue is created —
+  `lpinfo -v` shows no USB URI otherwise. Script is idempotent, re-run.
+- Rendering a page on ARMv6 700 MHz takes ~30-60 s — slow is normal.
 
-## Клиенты
+## Conventions
 
-- Ноутбук (Ubuntu 24.04): очередь `HP1020` → `ipp://printserver.local:631/printers/HP1020`,
-  `-m everywhere` (IPP Everywhere), принтер по умолчанию. Клиент шлёт PDF,
-  сервер растрирует gs→foo2zjs→ZjStream.
-- Windows: добавить по URL `http://printserver.local:631/printers/HP1020`,
-  драйвер **Microsoft PS Class Driver** (или MS Publisher Imagesetter) —
-  CUPS на Pi конвертирует PS сам. Родной драйвер HP 1020 через IPP не работает.
-- Android: штатная служба печати (mDNS) или Mopria.
+- Shell: `bash`, `set -euo pipefail`, idempotent, comment-heavy (the users
+  are beginners).
+- Docs (`docs/`) are in Russian; code/README in English.
+- `images/` holds downloaded OS images — gitignored.
 
-## Грабли, уже наступленные
+## Verify changes
 
-1. **Слабый БП = труп ФС.** Просадка → I/O errors → ro-remount →
-   полуразваленный apt. Лечится перезаписью карты + нормальный БП.
-2. **Trixie требует `userconf.txt`** в bootfs (`pi:sha512crypt`) — иначе
-   `userconfig.service` вешает загрузку интерактивным мастером на tty8.
-   SSH включается пустым файлом `ssh` в bootfs (через `sshswitch.service`).
-3. **Принтер должен быть включён** при создании очереди — `lpinfo -v`
-   не покажет URI с выключенным принтером. Скрипт идемпотентен — перезапустить.
-4. Смена карты = новые host keys → чистить `known_hosts`.
-
-## Проверка и диагностика
-
-- Тест-страница на сервере: `lp -d HP1020 /usr/share/cups/data/testprint`
-  (рендер на Pi 1 — до ~30-60 с на страницу, терпеть).
-- Логи: `/var/log/cups/error_log`, `journalctl | grep -i hplj` (загрузчик прошивки).
-- Диагностика: `sudo bash ~/printserver/scripts/diagnostics.sh`.
-
-## Файлы проекта
-
-- `scripts/setup-print-server.sh` — вся настройка (идемпотентный)
-- `scripts/load-firmware.sh` — ручная заливка прошивки
-- `scripts/diagnostics.sh` — сбор диагностики
-- `docs/01..04` — пошаговые инструкции (запись SD, настройка, клиенты, траблшутинг)
-- На Pi: копия в `~/printserver/` (вкладывается в bootfs при записи карты)
-- `images/` — скачанный образ ОС (570 МБ .img.xz, в git не идёт)
+- `bash -n scripts/*.sh` for syntax.
+- On a live Pi: `sudo bash scripts/setup-print-server.sh` (idempotent),
+  then `lp -d HP1020 /usr/share/cups/data/testprint`, watch
+  `journalctl | grep -i hplj` for firmware uploads.
