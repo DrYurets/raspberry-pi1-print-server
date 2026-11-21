@@ -7,7 +7,7 @@ sep() { printf '\n========== %s ==========\n' "$*"; }
 
 sep "System"
 uname -a
-cat /etc/os-release 2>/dev/null | grep -E 'PRETTY|VERSION='
+grep -E 'PRETTY|VERSION=' /etc/os-release 2>/dev/null
 uptime
 free -h | head -2
 

@@ -1,5 +1,8 @@
 # raspberry-pi1-print-server
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![check](https://github.com/DrYurets/raspberry-pi1-print-server/actions/workflows/check.yml/badge.svg)](https://github.com/DrYurets/raspberry-pi1-print-server/actions/workflows/check.yml)
+
 Turn a **HP LaserJet 1020** USB printer into a network printer using a
 **Raspberry Pi 1 Model B** (yes, the original 700 MHz ARMv6 board with
 512 MB RAM — plenty for a print server).

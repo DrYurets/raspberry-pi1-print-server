@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the feature and why it's useful
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Related printer model (if any)
+      description: e.g. "HP LaserJet 1018" — helps judge how generic the change can be

@@ -74,7 +74,9 @@ grep -q 'Allow @LOCAL' "$CUPSD" || sed -i '/Order allow,deny/a\  Allow @LOCAL' "
 # Share the printer and allow remote administration
 cupsctl --share-printers --remote-admin
 # CUPS admin user
-[ -n "$REAL_USER" ] && usermod -aG lpadmin "$REAL_USER" || true
+if [ -n "$REAL_USER" ]; then
+    usermod -aG lpadmin "$REAL_USER"
+fi
 systemctl restart cups
 ok "CUPS listens on :631 and is open to the LAN"
 

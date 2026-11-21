@@ -1,0 +1,33 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in what you can —
+        `sudo bash diagnostics.sh` output is the most useful single thing.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected vs what you got
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: diagnostics.sh output
+      description: Run `sudo bash diagnostics.sh` on the Pi and paste the output
+      render: shell
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware / OS
+      description: e.g. "Pi 1 B 512MB, Raspberry Pi OS Lite Trixie"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: /var/log/cups/error_log, journalctl output
+      render: shell
