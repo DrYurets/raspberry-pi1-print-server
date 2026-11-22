@@ -10,3 +10,6 @@ Thumbs.db
 # Editor/backup files
 *~
 *.swp
+
+# Local secrets (credentials) — never commit
+.printserver.env
